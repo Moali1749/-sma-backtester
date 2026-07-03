@@ -1,72 +1,97 @@
-# SMA Momentum Backtester (AAPL)
+# SMA Momentum Backtester — From Strategy to Research
 
-A backtest of a simple moving-average (SMA) momentum strategy on Apple stock, built from scratch in Python. The goal of this project was not to find a profitable strategy, but to build an **honest** backtest and understand exactly what every line does — including the subtle mistakes that make most beginner backtests misleading.
+A two-part quantitative finance project in Python. Part 1 builds an honest backtest of an SMA momentum strategy on Apple stock. Part 2 subjects that result to the tests a quant researcher would apply — risk metrics, robustness checks, and transaction costs — and reaches a more sobering, more interesting conclusion.
 
-## The Strategy
+**Notebooks:**
+- `01_sma_backtester.ipynb` — the strategy and core backtest
+- `02_research_extension.ipynb` — risk metrics, robustness grid, transaction costs
 
-A classic trend-following rule based on a 20-day simple moving average:
+---
 
-- **Price above SMA-20** → the stock is trending up → **hold the stock** (position = 1)
-- **Price below SMA-20** → the stock is trending down → **stay in cash** (position = 0)
+## Part 1 — The Strategy
 
-The SMA acts as a direction indicator, not a "fair price." The idea rests on *momentum*: trends tend to persist, so the strategy rides an uptrend and steps aside when it breaks.
+A classic trend-following rule on a 20-day simple moving average:
 
-## Avoiding Look-Ahead Bias
+- **Price above SMA-20** → uptrend → hold the stock (position = 1)
+- **Price below SMA-20** → downtrend → stay in cash (position = 0)
 
-The most important design decision in the project. A signal based on today's **closing** price is only known *after* the market closes, so it cannot be acted on until the **next** day. The signal is therefore shifted forward by one day:
+### Avoiding look-ahead bias
+
+A signal based on today's closing price is only known after the market closes, so it cannot be acted on until the next day. The signal is shifted forward by one day:
 
 ```python
-df["signal"]   = (df["close"] > df["sma20"]).astype(int)
-df["position"] = df["signal"].shift(1)   # act on tomorrow, not today
+signal   = (close > sma).astype(int)
+position = signal.shift(1)   # act tomorrow, not today
 ```
 
-Skipping this shift is the single most common beginner error — it lets the backtest "trade" on information it wouldn't have had in real time, producing impressive but fake returns.
+Skipping this shift lets a backtest "trade" on information it wouldn't have had in real time — the most common beginner error, producing impressive but fake returns.
 
-## Results (2015–2024)
+### Initial result (AAPL, 2015–2024, no costs)
 
-Growth of $1 invested at the start of 2015:
-
-| Approach | Final value | Avg. daily return |
+| | Buy & Hold | Strategy |
 |---|---|---|
-| Buy & Hold (AAPL) | ×9.46 | 0.109% |
-| SMA Strategy | ×12.17 | 0.106% |
+| Growth of $1 | ×9.46 | **×12.17** |
+| Avg. daily return | 0.109% | 0.106% |
 
-The interesting part: the strategy's **average daily return was lower**, yet it **finished with more capital**.
+The strategy finished higher despite a *lower* average daily return — because capital compounds multiplicatively, and avoiding deep drawdowns matters more than capturing every gain. At this point the strategy looked like a winner. Part 2 tests whether that holds up.
 
-## The Key Insight
+---
 
-Capital compounds multiplicatively, not additively — final wealth is the *product* of daily `(1 + r)` factors, not their sum. Large drawdowns hurt this product disproportionately: a 50% loss requires a 100% gain just to recover.
+## Part 2 — The Research
 
-By sitting in cash during major downturns (2018, the 2020 COVID crash, 2022), the strategy gave up some upside but avoided the deepest drops. Because drawdowns damage compounded capital nonlinearly, **avoiding big losses outweighed the missed gains** — which is why a strategy with lower average daily return still won on total growth.
+### A. Risk metrics
 
-This is the central lesson of the project: *average return is not the same as final outcome, and controlling drawdowns can matter more than maximizing returns.*
+Total return says nothing about the risk taken to earn it. Three standard metrics (AAPL, SMA-20, before costs):
+
+| Metric | Buy & Hold | Strategy |
+|---|---|---|
+| Annualised volatility | higher | **lower** |
+| Sharpe ratio | 0.9 | **1.4** |
+| Max drawdown | −38% | **−22%** |
+
+All three favour the strategy, and for the same reason: sitting in cash during major downturns (2018, COVID-2020, 2022) cuts both the variance of returns and the depth of drawdowns. The drawdown curve in the notebook shows this directly — the strategy stays near the surface while buy & hold dives.
+
+### B. Robustness check — is it real or cherry-picked?
+
+One good backtest on one stock with one parameter proves little: with enough combinations, some will look good by pure chance. The strategy was re-run across a 5×5 grid — five tickers (AAPL, MSFT, GOOGL, AMZN, KO) × five SMA windows (10, 20, 50, 100, 200).
+
+**Result: out of 25 combinations, only one — the original AAPL + SMA-20 — achieved a Sharpe above 1.** Most of the grid sits well below; Coca-Cola (a low-trend stock) is weak at every window, and fast windows on several tickers produce *negative* Sharpe ratios.
+
+This is the visual signature of **overfitting**: a single green cell in a red field (see the heatmap in the notebook). The strong original result was a lucky pairing of asset and parameter, not a market regularity.
+
+### C. Transaction costs
+
+The backtest above assumes trading is free. Adding a realistic 0.1% cost per trade:
+
+| AAPL + SMA-20 | No costs | With costs |
+|---|---|---|
+| Sharpe | 1.40 | 1.33 |
+| Growth of $1 | ×12.17 | **×9.90** |
+| Number of trades | — | **207** |
+
+207 trades over ten years — the strategy crosses its SMA roughly every 12 trading days. Each crossing costs money, and compounding turns a tiny 0.1% fee into a **19% haircut on final wealth**. After costs, the strategy's edge over buy & hold (×9.90 vs ×9.46) nearly vanishes. Fast SMA windows suffer most: more crossings, more fees, and several grid cells turn negative.
+
+**Turnover matters:** an active strategy must beat the market by more than its trading costs — not just beat it.
+
+---
+
+## Conclusions
+
+1. **The honest backtest still looked too good.** Even with look-ahead bias removed, the initial result (Sharpe 1.4, ×12.17) did not survive scrutiny.
+2. **The edge was not robust.** Across 25 ticker/window combinations, only the original pair cleared Sharpe 1 — a classic overfitting pattern.
+3. **Costs consumed most of what remained.** 207 trades at 0.1% each erased ~19% of final wealth and nearly all outperformance over buy & hold.
+4. **The realistic takeaway:** a simple SMA momentum rule does not provide a reliable edge after robustness checks and costs. This is consistent with market efficiency — if such a simple rule worked reliably, it would be arbitraged away.
+
+The project's real result is not a profitable strategy but a working research process: build honestly, measure risk (not just return), test for robustness before believing anything, and account for costs.
 
 ## Tech Stack
 
-- **Python**
-- **yfinance** — downloading historical price data
-- **pandas** — time-series data handling, rolling windows, vectorized returns
-- **matplotlib** — visualizing the equity curves
-
-## How It Works (pipeline)
-
-1. **Data** — download adjusted OHLCV data for AAPL via `yfinance` (`auto_adjust=True` to correct for splits and dividends).
-2. **Compute** — daily returns via `pct_change()`; 20-day SMA via `rolling(20).mean()`.
-3. **Signal** — compare price to SMA, convert to 1/0, shift by one day.
-4. **Backtest** — strategy return = `position × return`; build equity curves with `cumprod()`.
-5. **Visualize** — plot strategy vs. buy & hold.
-
-## Honest Limitations
-
-This is a single, deliberately simple experiment, and the result should be read as an illustration of a principle, not proof of an edge:
-
-- Tested on **one stock**, **one SMA window (20)**, **one time period** — not robust across assets or parameters.
-- **No transaction costs, slippage, or taxes** — real trading would erode returns, especially given frequent entries/exits.
-- Trend-following strategies are known to **bleed in sideways markets** (whipsaw), which a single trending stock like AAPL doesn't fully stress-test.
+- **Python** — yfinance (data), pandas (time series, rolling windows), numpy (metrics), matplotlib & seaborn (equity curves, drawdown curve, heatmap)
+- Core techniques: vectorised returns (`pct_change`), rolling windows (`rolling().mean()`), signal shifting (`shift`), running maximum for drawdowns (`cummax`), cumulative compounding (`cumprod`), parameter sweep with a reusable backtest function, pivot + heatmap for grid analysis
 
 ## Future Work
 
-- Test across many tickers and SMA windows to check robustness (avoid cherry-picking).
-- Add transaction costs and measure how sensitive the edge is to them.
-- Report risk metrics: maximum drawdown, Sharpe ratio, volatility — not just final return.
-- Compare against a mean-reversion variant, which profits in the sideways regimes where momentum struggles.
+- Out-of-sample testing: fit parameters on one period, evaluate on another (walk-forward analysis).
+- Compare against a mean-reversion variant, which profits in the sideways regimes where momentum bleeds.
+- Model costs more realistically: spread, slippage, and their dependence on volatility.
+- Extend the asset universe beyond US large-caps to test regime dependence.
